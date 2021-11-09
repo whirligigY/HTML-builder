@@ -2,74 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const stream = require("stream");
 
-const filePath = path.join(__dirname, "project-dist");
-const filePathForAssets = path.join(__dirname, "project-dist", "assets");
-
 async function createDirectory(filePath) {
-  const projectDist = await fs.promises.mkdir(
-    filePath,
-    { recursive: true },
-    (err) => {
-      if (err) throw err;
-    }
-  );
+  await fs.promises.mkdir(filePath, { recursive: true });
 }
-createDirectory(filePath);
-
-function getFilePath(fileName) {
-  return path.join(__dirname, "project-dist", fileName);
-}
-const streamReadable = fs.createReadStream(
-  path.join(__dirname, "template.html")
-);
-function getReadableStream(components, file) {
-  return fs.createReadStream(path.join(__dirname, components, file));
-}
-
-const streamWriteable = fs.createWriteStream(
-  path.join(__dirname, "project-dist", "index.html")
-);
-//streamWriteable.write("");
-const bundlePath = path.join(__dirname, "project-dist", "style.css");
-const streamStylesWriteable = fs.createWriteStream(bundlePath);
-
-async function getFilesFromDirectory(filePath, extens) {
-  const filesWithStyles = await fs.promises.readdir(filePath, {
-    withFileTypes: true,
-  });
-
-  fs.readFile(path.join(__dirname, "template.html"), "utf-8", (err, result) => {
-    if (err) throw err;
-    str = result.toString();
-
-    filesWithStyles.forEach((file, _, arr) => {
-      if (file.isFile() && path.extname(file.name).slice(1) === extens) {
-        try {
-          if (extens === "html") {
-            getReadableStream("components", file.name).on("data", (data) => {
-              str = str.replace(
-                `{{${file.name.slice(0, file.name.indexOf("."))}}}`,
-                data.toString()
-              );
-              if (!str.includes("{{")) {
-                streamWriteable.write(str);
-              }
-            });
-          }
-          if (extens === "css") {
-            fs.createReadStream(path.join(__dirname, "styles", file.name)).pipe(
-              streamStylesWriteable
-            );
-          }
-        } catch (e) {
-          console.log(e);
-        }
-      }
-    });
-  });
-}
-getFilesFromDirectory(path.join(__dirname, "styles"), "css");
-getFilesFromDirectory(path.join(__dirname, "components"), "html");
 
 async function copyFileInfo(pathToFile) {
   fs.promises
@@ -113,12 +48,67 @@ async function copyFileInfo(pathToFile) {
       });
     });
 }
-fs.rmdir(
-  path.join(__dirname, "project-dist", "assets"),
-  { recursive: true },
-  async (err) => {
-    if (err) throw err;
-    await createDirectory(filePathForAssets);
-    copyFileInfo(["assets"]);
+async function insertTemplates(file, templateFiles) {
+  let outputContent = await fs.promises.readFile(file);
+  outputContent = outputContent.toString();
+  templateFiles.forEach((template) => {
+    outputContent = outputContent.replace(
+      `{{${path.parse(template.filename).name}}}`,
+      template.content
+    );
+  });
+  return outputContent;
+}
+
+async function createBundle(dir, file, template) {
+  const files = await fs.promises.readdir(dir, {
+    withFileTypes: true,
+  });
+  const templates = files.map((file) => {
+    if (file.isFile()) {
+      return fs.promises.readFile(path.join(dir, file.name));
+    }
+  });
+  const contents = await Promise.all(templates); //.filter((item) => item);
+  let outputContent;
+  if (template) {
+    const templateFiles = contents.reduce((acc, item, index) => {
+      acc.push({
+        filename: files[index].name,
+        content: item.toString(),
+      });
+      return acc;
+    }, []);
+    outputContent = await insertTemplates(template, templateFiles);
+  } else {
+    outputContent = contents.reduce((acc, item) => {
+      return acc + item.toString();
+    }, "");
   }
-);
+  fs.promises.writeFile(file, outputContent);
+}
+
+//createBundle("components", "index.htnl", "template.html");
+
+const filePath = path.join(__dirname, "project-dist");
+const filePathForAssets = path.join(__dirname, "project-dist", "assets");
+
+fs.rmdir(filePath, { recursive: true }, async (err) => {
+  // if (err) throw err;
+  try {
+    await createDirectory(filePath);
+    await createDirectory(filePathForAssets);
+    createBundle(
+      path.join(__dirname, "components"),
+      path.join(__dirname, "project-dist", "index.html"),
+      path.join(__dirname, "template.html")
+    );
+    createBundle(
+      path.join(__dirname, "styles"),
+      path.join(__dirname, "project-dist", "style.css")
+    );
+    copyFileInfo(["assets"]);
+  } catch (e) {
+    console.log(e);
+  }
+});
